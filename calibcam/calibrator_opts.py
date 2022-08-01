@@ -2,8 +2,9 @@ import cv2
 import numpy as np
 
 
-def get_default_opts():
+def get_default_opts(model: str):
     default_opts = {
+        'model': model,  # or "omnidir"
         'debug': True,  # Will enable advanced tests and outputs
         'coord_cam': 0,  # Reference camera that defines the multicam coordinate system
         'frame_step': 1,  # Skip frames in recording
@@ -16,19 +17,11 @@ def get_default_opts():
         'numerical_jacobian': False,  # Use 2-point numerical jacobian instead of jax.jacobian
         'optimize_board_poses': False,  # Optimize individual board poses then all params again. In a test,
                                         #  optimality was already reached after a first general optimization
-        'free_vars': {
-            'cam_pose': True,
-            'board_poses': True,
-            'A': np.asarray([[True, False, True],  # a   c   u   (c is skew and should not be necessary)
-                             [False, True, True],  # 0   b   v
-                             [False, False, False],  # 0   0   1
-                             ]),
-            'k': np.asarray([1, 1, -1, -1, -1]),  # 1: optimize, 0: leave const, -1: force 0
-        },
+        'free_vars': get_free_vars(model),
         'detection': {
             'inter_frame_dist': 0.0,
             'aruco_calibration': {
-                'flags': (cv2.CALIB_ZERO_TANGENT_DIST + cv2.CALIB_FIX_K3),
+                'flags': get_flags(model),
                 'criteria': (cv2.TermCriteria_COUNT + cv2.TermCriteria_EPS,
                              30,
                              1.1920928955078125e-07),  # float(np.finfo(np.float32).eps)
@@ -84,3 +77,30 @@ def finalize_aruco_detector_opts(aruco_detect_opts):
 
     opts['parameters'] = detector_parameters
     return opts
+
+
+def get_free_vars(model: str):
+    free_vars = {
+            'cam_pose': True,
+            'board_poses': True,
+            'A': np.asarray([[True, False, True],  # a   c   u   (c is skew and should not be necessary)
+                             [False, True, True],  # 0   b   v
+                             [False, False, False],  # 0   0   1
+                             ]),
+            'k': np.asarray([1, 1, -1, -1, -1]),  # 1: optimize, 0: leave const, -1: force 0
+        }
+
+    if model == "omnidir":
+        # 'A' or 'K' (opencv-omnidir notation) - camera matrix
+        # 'k' or 'D' (opencv-omnidir notation) - distortion coeffs
+        free_vars['xi'] = True
+
+    return free_vars
+
+
+def get_flags(model: str):
+    if model == "pinhole":
+        return (cv2.CALIB_ZERO_TANGENT_DIST + cv2.CALIB_FIX_K3)
+    else:
+        # "omnidir"
+        return (cv2.omnidir.CALIB_FIX_P1 + cv2.omnidir.CALIB_FIX_P2)

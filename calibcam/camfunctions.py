@@ -6,12 +6,14 @@ import timeit
 from calibcam import optimization, board, helper, calibrator_opts
 from calibcam.exceptions import *
 
+import sys
+
 
 def optimize_calib_parameters(corners, calibs_multi, board_params, opts=None, verbose=None):
     if opts is None:
         opts = {}
 
-    defaultopts = calibrator_opts.get_default_opts()
+    defaultopts = calibrator_opts.get_default_opts(opts.get('model', "pinhole"))
     opts = helper.deepmerge_dicts(opts, defaultopts)
 
     if verbose is None:
@@ -24,10 +26,10 @@ def optimize_calib_parameters(corners, calibs_multi, board_params, opts=None, ve
     args, vars_free = make_optim_input(board_params, calibs_multi, corners, opts)
 
     # This triggers JIT compilation
-    optimization.obj_fcn_wrapper(vars_free, args)
+    optimization.obj_fcn_wrapper(opts['model'])(vars_free, args)
     # This times
     tic = timeit.default_timer()
-    result = optimization.obj_fcn_wrapper(vars_free, args)
+    result = optimization.obj_fcn_wrapper(opts['model'])(vars_free, args)
     if verbose > 1 and opts['debug']:
         print(
             f"Objective function took {timeit.default_timer() - tic} s: squaresum {np.sum(result ** 2)} over {result.size} residuals. Shape {result.shape}.")
@@ -35,7 +37,7 @@ def optimize_calib_parameters(corners, calibs_multi, board_params, opts=None, ve
     if opts['numerical_jacobian']:
         jac = '2-point'
     else:
-        jac = optimization.obj_fcn_jacobian_wrapper
+        jac = optimization.obj_fcn_jacobian_wrapper(opts['model'])
         if verbose > 1 and opts['debug']:
             # This triggers JIT compilation
             jac(vars_free, args)
@@ -48,7 +50,7 @@ def optimize_calib_parameters(corners, calibs_multi, board_params, opts=None, ve
     if verbose > 1:
         print('Starting optimization procedure')
 
-    min_result: OptimizeResult = least_squares(optimization.obj_fcn_wrapper,
+    min_result: OptimizeResult = least_squares(optimization.obj_fcn_wrapper(opts['model']),
                                                vars_free,
                                                jac=jac,
                                                bounds=np.array([[-np.inf, np.inf]] * vars_free.size).T,
@@ -60,7 +62,7 @@ def optimize_calib_parameters(corners, calibs_multi, board_params, opts=None, ve
         print('Optimization algorithm converged:\t{:s}'.format(str(min_result.success)))
         print('Time needed:\t\t\t\t{:.0f} seconds'.format(current_time - start_time))
 
-    calibs_fit, rvecs_boards, tvecs_boards = optimization.unravel_to_calibs(min_result.x, args)
+    calibs_fit, rvecs_boards, tvecs_boards = optimization.unravel_to_calibs(min_result.x, opts['model'], args)
 
     return calibs_fit, rvecs_boards, tvecs_boards, min_result, args
 
@@ -76,7 +78,7 @@ def make_optim_input(board_params, calibs_multi, corners, opts):
         'coord_cam': opts['coord_cam'],  # This is currently only required due to unsolved jacobian issue
         'board_coords_3d_0': board_coords_3d_0,  # Board points in z plane
         'corners': corners,
-        'precalc': optimization.get_precalc(),
+        'precalc': optimization.get_precalc(opts['model']),
         # Inapplicable tue to autograd slice limitations
         # 'memory': {  # References to memory that can be reused, avoiding cost of reallocation
         #     'residuals': np.zeros_like(corners),
@@ -121,16 +123,22 @@ def get_header_from_reader(reader):
     return header
 
 
-def test_objective_function(calibs, vars_free, args, corners_detection, board_params, individual_poses=False):
-    from calibcamlib import Camerasystem
+def test_objective_function(model, calibs, vars_free, args, corners_detection, board_params, individual_poses=False):
+    sys.path.insert(0, "/home/cheekoti_la/Downloads/github/calibcamlib_po")
+
+    if model == "omnidir":
+        from calibcamlib import OmniCamerasystem as camsys
+    else:
+        from calibcamlib import Camerasystem as camsys
+
     from scipy.spatial.transform import Rotation as R  # noqa
 
-    residuals_objfun = np.abs(optimization.obj_fcn_wrapper(vars_free, args).reshape(corners_detection.shape))
+    residuals_objfun = np.abs(optimization.obj_fcn_wrapper(model)(vars_free, args).reshape(corners_detection.shape))
     residuals_objfun[residuals_objfun == 0] = np.NaN
 
     corners_cameralib = np.empty_like(residuals_objfun)
     corners_cameralib[:] = np.NaN
-    cs = Camerasystem.from_calibs(calibs)
+    cs = camsys.from_calibs(calibs)
     board_points = board.make_board_points(board_params)
     for i_cam, calib in enumerate(calibs):
         # This calculates from individual board pose estimations
@@ -139,7 +147,7 @@ def test_objective_function(calibs, vars_free, args, corners_detection, board_pa
             tvecs_board = calibs[i_cam]['tvecs'].reshape(-1, 3)
         # This calculates from common camera board estimations
         else:
-            pose_params = optimization.make_common_pose_params(calibs, corners_detection, board_params)
+            pose_params = optimization.make_common_pose_params(model, calibs, corners_detection, board_params)
             rvecs_board = pose_params[0].reshape(-1, 3)
             tvecs_board = pose_params[1].reshape(-1, 3)
 
