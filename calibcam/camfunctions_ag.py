@@ -23,26 +23,14 @@ def map_world_board_to_cams(boards_coords_3d, rotmats_cams, tvecs_cams):
     return boards_coords_3d
 
 
-def board_to_ideal_plane(boards_coords_3d):
-    # We add eps to the quotient to avoid division by 0 errors from non-tracked boards. Not exactly sure why
-    # this happens?
-    # TODO find more elegant way. This appears difficult since we cannot use a[a==0] = ... due to autograd limitations
-    eps = np.finfo(np.float64).eps
-    boards_coords_3d = np.concatenate((
-        boards_coords_3d[..., (0,)] / (boards_coords_3d[..., (2,)] + eps),
-        boards_coords_3d[..., (1,)] / (boards_coords_3d[..., (2,)] + eps),
-        np.ones_like(boards_coords_3d[..., (2,)]),
-    ), -1)
-    return boards_coords_3d
-
-
 def board_to_unit_sphere(boards_coords_3d):
     # Project points onto a unit spherical mirror which has the camera at its center.
     # TODO find more elegant way. This appears difficult since we cannot use a[a==0] = ... due to autograd limitations
     eps = np.finfo(np.float64).eps
     norm = np.linalg.norm(boards_coords_3d, axis=-1, keepdims=True)
 
-    boards_coords_3d = boards_coords_3d / (norm + eps)
+    # boards_coords_3d = boards_coords_3d / (norm + eps)
+    boards_coords_3d = np.where(norm == 0, boards_coords_3d, boards_coords_3d / norm)
 
     return boards_coords_3d
 
@@ -61,9 +49,17 @@ def to_ideal_plane(boards_coords_3d):
     # this happens?
     # TODO find more elegant way. This appears difficult since we cannot use a[a==0] = ... due to autograd limitations
     eps = np.finfo(np.float64).eps
-    boards_coords_3d = np.concatenate((
+    """boards_coords_3d = np.concatenate((
         boards_coords_3d[..., (0,)] / (boards_coords_3d[..., (2,)] + eps),
         boards_coords_3d[..., (1,)] / (boards_coords_3d[..., (2,)] + eps),
+        np.ones_like(boards_coords_3d[..., (2,)]),
+    ), -1)"""
+
+    boards_coords_3d = np.concatenate((
+        np.where(boards_coords_3d[..., (2,)] == 0, boards_coords_3d[..., (0,)],
+                 boards_coords_3d[..., (0,)] / boards_coords_3d[..., (2,)]),
+        np.where(boards_coords_3d[..., (2,)] == 0, boards_coords_3d[..., (1,)],
+                 boards_coords_3d[..., (1,)] / boards_coords_3d[..., (2,)]),
         np.ones_like(boards_coords_3d[..., (2,)]),
     ), -1)
     return boards_coords_3d
@@ -90,5 +86,6 @@ def distort(boards_coords_ideal, ks):
 
 
 def ideal_to_sensor(boards_coords_dist, cam_matrices):
-    boards_coords_dist = np.einsum('...ij,...j->...i', cam_matrices, boards_coords_dist)  # TODO fix for other broadcasts
+    boards_coords_dist = np.einsum('...ij,...j->...i', cam_matrices,
+                                   boards_coords_dist)  # TODO fix for other broadcasts
     return boards_coords_dist[..., 0:2]

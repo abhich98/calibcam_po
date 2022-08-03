@@ -39,7 +39,7 @@ def obj_fcn_pinhole(rvecs_cams, tvecs_cams, cam_matrices, ks, rvecs_boards, tvec
         rotmats_cams.reshape((corners.shape[0], 1, 1, 3, 3)),
         tvecs_cams.reshape((corners.shape[0], 1, 1, 3))
     )
-    boards_coords = camfuncs_ag.board_to_ideal_plane(boards_coords)
+    boards_coords = camfuncs_ag.to_ideal_plane(boards_coords)
     boards_coords = camfuncs_ag.distort(
         boards_coords,
         ks.reshape((corners.shape[0], 1, 1, 5))
@@ -78,9 +78,9 @@ def obj_fcn_omnidir(rvecs_cams, tvecs_cams, cam_matrices, xis, ks, rvecs_boards,
         rotmats_cams.reshape((corners.shape[0], 1, 1, 3, 3)),
         tvecs_cams.reshape((corners.shape[0], 1, 1, 3))
     )
-
     boards_coords = camfuncs_ag.board_to_unit_sphere(boards_coords)
     boards_coords = camfuncs_ag.shift_camera(boards_coords, xis.reshape((corners.shape[0], 1, 1, 1)))
+
     boards_coords = camfuncs_ag.to_ideal_plane(boards_coords)
     boards_coords = camfuncs_ag.distort(boards_coords, ks.reshape((corners.shape[0], 1, 1, 5)))
     boards_coords = camfuncs_ag.ideal_to_sensor(

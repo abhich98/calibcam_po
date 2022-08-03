@@ -374,7 +374,10 @@ class CamCalibrator:
         plt.imshow(cv2.aruco.drawDetectedCornersCharuco(im, corners_use[fidx], ids_use[fidx]))
 
         board_coords_3d = R.from_rotvec(r).apply(board_coords_3d_0) + t
-        board_coords_3d = camfunctions_ag.board_to_ideal_plane(board_coords_3d)
+        if 'xi' in calibs[cidx]:
+            board_coords_3d = camfunctions_ag.board_to_unit_sphere(board_coords_3d)
+            board_coords_3d = camfunctions_ag.shift_camera(board_coords_3d, calibs[cidx]['xi'].squeeze()[0])
+        board_coords_3d = camfunctions_ag.to_ideal_plane(board_coords_3d)
 
         board_coords_3d_nd = camfunctions_ag.ideal_to_sensor(board_coords_3d, calibs[cidx]['A'])
 
