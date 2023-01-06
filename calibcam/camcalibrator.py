@@ -73,6 +73,18 @@ class CamCalibrator:
         return calibs_init
 
     @staticmethod
+    def load_calibs_single(rec_file):
+        rec_path = str(Path(rec_file).parent)
+        calibs_single_path = rec_path + "/multicam_calibration.npy"
+        if os.path.isfile(calibs_single_path):
+            print(f"Loading single camera calibration from {calibs_single_path}")
+            calibs_single = np.load(calibs_single_path, allow_pickle=True).item()
+        else:
+            raise RuntimeError(f"Recording: {rec_file} has no single calibration file available!")
+
+        return calibs_single
+
+    @staticmethod
     def load_opts(opts, data_path=None):
         if data_path is not None and os.path.isfile(data_path + "/opts.npy"):
             fileopts = np.load(data_path + "/opts.npy", allow_pickle=True).item()
@@ -112,50 +124,66 @@ class CamCalibrator:
 
         self.board_params = self.get_board_params_from_name(self.board_name)
 
-    def perform_multi_calibration(self):
+    def perform_multi_from_single_calibration(self):
+        # This function is specifically designed to perform multi calibration of compound omnidirectional camera
+        # from single camera calibration files. Therefore, the detections and single camera calibration is already done
+        # and are readily availbale for futher multi calibration.
+
         n_corners = (self.board_params["boardWidth"] - 1) * (self.board_params["boardHeight"] - 1)
         required_corner_idxs = [0,
                                 self.board_params["boardWidth"] - 2,
                                 (self.board_params["boardWidth"] - 1) * (self.board_params["boardHeight"] - 2),
                                 (self.board_params["boardWidth"] - 1) * (self.board_params["boardHeight"] - 1) - 1,
                                 ]  # Corners that we require to be detected for pose estimation
-        if self.opts["optimize_only"]:  # We expect that detections and single cam calibs are already present
-            preoptim = np.load(self.data_path + '/preoptim.npy', allow_pickle=True)[()]
-            preoptim = compatibility.update_preoptim(preoptim, n_corners)
 
-            calibs_single = preoptim['info']['other']['calibs_single']
-            if 'used_frames_ids' in preoptim['info']:
-                used_frames_ids = preoptim['info']['used_frames_ids']
-            corners = preoptim['info']['corners']
+        init_frames_masks = self.opts.get('init_frames_masks', None)
+        if isinstance(init_frames_masks, str):
+            init_frames_masks = np.load(init_frames_masks)
 
-            # We just redo this since it is fast and the output may help
-            calibs_multi = estimate_cam_poses(calibs_single, self.opts, corners=corners,
-                                              required_corner_idxs=required_corner_idxs)
-        else:
-            # detect corners
-            # Corners are originally detected by cv2 as ragged lists with additional id lists (to determine which
-            # corners the values refer to) and frame masks (to determine which frames the list elements refer to).
-            # This saves memory, but significantly increases complexity of code as we might index into camera frames,
-            # used frames or global frames. For simplification, corners are returned as a single matrix of shape
-            #  n_cams x n_timepoints_with_used_detections x n_corners x 2
-            # Memory footprint at this stage is al but critical.
-            corners, used_frames_ids = \
-                detect_corners(self.rec_file_names, self.n_frames, self.board_params, self.opts)
+        # Extract single calibration
+        calibs_single_list = [self.load_calibs_single(rec_file=rec) for rec in self.rec_file_names]
 
-            # perform single calibration
-            calibs_single = self.perform_single_cam_calibrations(corners, calibs_init=self.calibs_init)
+        frames_masks = []
+        corners_all = []
+        for single in calibs_single_list:
+            frames_mask = np.zeros(self.n_frames, dtype=bool)
+            frames_mask[single['info']['used_frames_ids']] = 1
+            frames_masks.append(frames_mask)
+            corners_all.append(np.squeeze(single['info']['corners']).reshape(-1, n_corners, 1, 2))
 
-            # analytically estimate initial camera poses
-            calibs_multi = estimate_cam_poses(calibs_single, self.opts, corners=corners,
-                                              required_corner_idxs=required_corner_idxs)
+            single['calibs'][0]['frames_mask'] = frames_mask
 
-            # Save intermediate result, for dev purposes on optimization (quote code above and unquote code below)
-            # pose_params = optimization.make_common_pose_params(calibs_multi, corners)
-            result = self.build_result(calibs_multi,
-                                       corners=corners, used_frames_ids=used_frames_ids,
-                                       # rvecs_boards=pose_params[0], tvecs_boards=pose_params[1],
-                                       other={'calibs_single': calibs_single})
-            self.save_multicalibration(result, 'preoptim')
+        corners = helper.make_corners_array(corners_all, None, n_corners, np.array(frames_masks))
+        used_frames_ids = np.where(np.any(frames_masks, axis=0))[0]
+
+        for single in calibs_single_list:
+            rvecs = np.empty((self.n_frames, 3))
+            rvecs[:] = np.NaN
+            tvecs = np.empty((self.n_frames, 3))
+            tvecs[:] = np.NaN
+
+            rvecs[single['info']['used_frames_ids']] = single['info']['rvecs_boards']
+            tvecs[single['info']['used_frames_ids']] = single['info']['tvecs_boards']
+
+            single['calibs'][0]['rvecs'] = rvecs[used_frames_ids]
+            single['calibs'][0]['tvecs'] = tvecs[used_frames_ids]
+            single['calibs'][0]['frames_mask'] = single['calibs'][0]['frames_mask'][used_frames_ids]
+
+        calibs_single = [single['calibs'][0] for single in calibs_single_list]
+
+        # analytically estimate initial camera poses
+        calibs_multi = estimate_cam_poses(calibs_single, self.opts, corners=corners,
+                                          required_corner_idxs=required_corner_idxs)
+
+        # Save intermediate result, for dev purposes on optimization (quote code above and unquote code below)
+        # pose_params = optimization.make_common_pose_params(calibs_multi, corners)
+        result = self.build_result(calibs_multi,
+                                   corners=corners, used_frames_ids=used_frames_ids,
+                                   # rvecs_boards=pose_params[0], tvecs_boards=pose_params[1],
+                                   other={'calibs_single': calibs_single,
+                                          'init_frames_masks': init_frames_masks if init_frames_masks is not None
+                                          else 0})
+        self.save_multicalibration(result, 'preoptim')
 
         if self.opts['debug']:
             args, vars_free = make_optim_input(self.board_params, calibs_multi, corners, self.opts)
@@ -205,7 +233,9 @@ class CamCalibrator:
                                    min_result=min_result, args=args,
                                    rvecs_boards=rvecs_boards, tvecs_boards=tvecs_boards,
                                    other={'calibs_single': calibs_single, 'calibs_multi': calibs_multi,
-                                          'board_coords_3d_0': board.make_board_points(self.board_params)})
+                                          'board_coords_3d_0': board.make_board_points(self.board_params),
+                                          'init_frames_masks': init_frames_masks if init_frames_masks is not None
+                                          else 0})
 
         print('SAVE MULTI CAMERA CALIBRATION')
         self.save_multicalibration(result)
@@ -338,6 +368,7 @@ class CamCalibrator:
             'vid_headers': [camfunctions.get_header_from_reader(r) for r in self.readers],
             # Headers. No content structure guaranteed
             'info': {  # Additional nonessential info from the calibration process
+                'fun_final': np.NaN,
                 'cost_val_final': np.NaN,
                 'optimality_final': np.NaN,
                 'corners': corners,

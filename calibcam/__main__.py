@@ -55,7 +55,7 @@ def main():
         opts = helper.deepmerge_dicts(opts, calibrator_opts.get_default_opts(args.model[0]))
         print(f"Camera model: {args.model[0]}")
         calibrator = CamCalibrator(recFileNames, board_name=args.board[0], opts=opts, data_path=args.data_path[0])
-        calibrator.perform_multi_calibration()
+        calibrator.perform_multi_from_single_calibration()
         print("Camera calibrated")
 
     toc = timeit.default_timer()

@@ -15,7 +15,7 @@ def estimate_cam_poses(calibs_single, opts, corners=None, required_corner_idxs=N
 
     # Opencv omnidirectional camera calibration does not calculate extrisic paraemters for all the frames. In such case,
     # it is necessary to omit such frames from estimating camera poses.
-    frames_rs_calcd = [calib["frames_mask"] for calib in calibs_single]
+    frames_rs_calcd = [calib["frames_mask"] for calib in calibs]
     # frames_rs_calcd = np.all(np.asarray(frames_rs_calcd), axis=0)
     frames_rs_calcd = np.asarray(frames_rs_calcd)
     frames_masks_req = frames_masks_req & frames_rs_calcd
@@ -28,8 +28,8 @@ def estimate_cam_poses(calibs_single, opts, corners=None, required_corner_idxs=N
     common_frame_mat[:, opts['coord_cam']] = common_frame_mat[:, opts['coord_cam']] * 10
     common_frame_mat[opts['coord_cam'], :] = common_frame_mat[:, opts['coord_cam']].T
 
-    rs = np.asarray([calib["rvecs"] for calib in calibs_single])
-    ts = np.asarray([calib["tvecs"] for calib in calibs_single])
+    rs = np.asarray([calib["rvecs"] for calib in calibs])
+    ts = np.asarray([calib["tvecs"] for calib in calibs])
 
     while not np.all(cams_oriented):
         # Find unoriented cam with the most overlaps with an oriented camera

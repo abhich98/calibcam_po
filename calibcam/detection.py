@@ -10,7 +10,7 @@ from calibcam import camfunctions, board, helper
 from calibcam.calibrator_opts import finalize_aruco_detector_opts
 
 
-def detect_corners(rec_file_names, n_frames, board_params, opts, return_matrix=True):
+def detect_corners(rec_file_names, n_frames, board_params, opts, return_matrix=True, init_frames_masks=None):
     print('DETECTING FEATURES')
 
     if 'start_frame_indexes' in opts:
@@ -21,9 +21,9 @@ def detect_corners(rec_file_names, n_frames, board_params, opts, return_matrix=T
         start_frm_indexes = [0]*len(rec_file_names)
         stop_frm_indexes = [None]*len(rec_file_names)
 
-    init_frames_masks = opts.get('init_frames_masks', [None] * len(rec_file_names))
-    if isinstance(init_frames_masks, str):
-        init_frames_masks = np.load(init_frames_masks)
+    if init_frames_masks is None:
+        init_frames_masks = [None] * len(rec_file_names)
+
     fin_frames_masks = np.zeros(shape=(len(rec_file_names), n_frames - np.max(start_frm_indexes)), dtype=bool)
     corners_all = []
     ids_all = []
@@ -50,8 +50,6 @@ def detect_corners(rec_file_names, n_frames, board_params, opts, return_matrix=T
 def detect_corners_cam(video, opts, board_params, start_frm_idx=0, stop_frm_idx=None, init_frames_mask=None):
     reader = imageio.get_reader(video)
 
-    if stop_frm_idx is None:
-        stop_frm_idx = camfunctions.get_n_frames_from_reader(reader)
     corners_cam = []
     ids_cam = []
     if init_frames_mask is None:
